@@ -1,6 +1,20 @@
-# cool-globe
+### Description
 
-Reusable interactive React globe component library focused on country and region drill-down.
+`cool-globe` is an interactive React globe library for country and region analytics, drill-down exploration, and metric-based geospatial dashboards.
+
+![cool-globe banner](./assets/banner.png)
+
+## Overview
+
+`cool-globe` helps to present geographic analytics in a clean and interactive way:
+
+- Renders a 3D world globe with country and region polygons.
+- Supports click drill-down from countries to regions.
+- Colors areas by metric intensity (`primaryMetric`).
+- Shows dynamic tooltip metrics (for example `visits`, `population`, `revenue`).
+- Handles "no data" regions clearly in tooltip output.
+- Exposes a library-level `resetSignal` API so frontend apps control reset UX.
+- Ships as npm-ready ESM/CJS bundles with TypeScript declarations.
 
 ## Installation
 
