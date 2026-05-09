@@ -2,7 +2,7 @@
 
 `cool-globe` is an interactive React globe library for country and region analytics, drill-down exploration, and metric-based geospatial dashboards.
 
-![cool-globe banner](./assets/banner.png)
+![cool-globe banner](https://raw.githubusercontent.com/RafalUlecki/cool-globe/master/assets/banner.png)
 
 ## Overview
 
