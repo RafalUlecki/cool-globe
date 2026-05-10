@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Globe from "react-globe.gl";
 import { feature } from "topojson-client";
 import type { Feature, FeatureCollection } from "geojson";
-import { Color, MeshPhongMaterial } from "three";
+import { Color } from "three";
+import type { MeshPhongMaterial } from "three";
 
 import type {
   GlobeLevel,

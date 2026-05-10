@@ -19,16 +19,21 @@
 ## Installation
 
 ```bash
-npm install cool-globe
+npm install cool-globe react-globe.gl three
 ```
 
-## Peer dependencies
+> `react`, `react-dom`, `react-globe.gl` and `three` are **peer dependencies** — they must be installed by the consuming app. This guarantees a single shared `three.js` instance in the page (multiple `three` copies break WebGL state, materials and shaders).
 
-Install these in the consuming app:
+### Peer dependency versions
 
 - `react` (`^18 || ^19`)
 - `react-dom` (`^18 || ^19`)
-- `react-globe.gl` (`^2`)
+- `react-globe.gl` (`^2.37.1`)
+- `three` (`^0.180.0`)
+
+### Requirements
+
+- Node.js `>= 18`
 
 ## Basic usage
 

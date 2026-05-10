@@ -22,6 +22,7 @@ export default defineConfig(({ command }) => ({
         "react/jsx-runtime",
         "react/jsx-dev-runtime",
         "react-globe.gl",
+        "three",
       ],
     },
   },
