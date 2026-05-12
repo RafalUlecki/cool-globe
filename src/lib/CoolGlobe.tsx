@@ -24,11 +24,38 @@ import type {
 } from "./CoolGlobe.types";
 import {
   createColorResolver,
-  formatMetric,
+  escapeHtml,
+  formatMetricDisplay,
   getMetricValue,
   getZoomLevelByAltitude,
+  humanizeMetricKey,
+  isHiddenMetricKey,
+  stripIsoFromDisplayName,
 } from "./dashboardGlobe.utils";
 import type { CoolGlobeProps } from "./types";
+
+const FLOAT_TOOLTIP_OVERRIDE_ID = "cool-globe-float-tooltip-override";
+
+const injectFloatTooltipOverride = () => {
+  if (typeof document === "undefined") return;
+  if (document.getElementById(FLOAT_TOOLTIP_OVERRIDE_ID)) return;
+  const style = document.createElement("style");
+  style.id = FLOAT_TOOLTIP_OVERRIDE_ID;
+  style.textContent = `
+.cool-globe-host .float-tooltip-kap {
+  background: transparent !important;
+  background-color: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  max-width: none !important;
+  font-size: inherit !important;
+  font-family: inherit !important;
+  color: transparent !important;
+}
+`;
+  document.head.appendChild(style);
+};
 
 export const CoolGlobe = ({
   statisticsData,
@@ -59,6 +86,10 @@ export const CoolGlobe = ({
     width: 900,
     height: 760,
   });
+
+  useEffect(() => {
+    injectFloatTooltipOverride();
+  }, []);
 
   const countriesMetricValues = useMemo(
     () =>
@@ -382,30 +413,41 @@ export const CoolGlobe = ({
   };
   const getMetricRowsHtml = (metricRecord: MetricRecord | undefined): string => {
     if (!metricRecord) {
-      return `<div>No data</div>`;
+      return `<div style="color:#697386;font-weight:500;font-size:15px;">No data available</div>`;
     }
     const metricEntries = Object.entries(metricRecord).filter(
-      ([, metricValue]) =>
-        typeof metricValue === "number" && Number.isFinite(metricValue),
+      ([metricKey, metricValue]) =>
+        !isHiddenMetricKey(metricKey) &&
+        typeof metricValue === "number" &&
+        Number.isFinite(metricValue),
     );
     if (!metricEntries.length) {
-      return `<div>No data</div>`;
+      return `<div style="color:#697386;font-weight:500;font-size:15px;">No data available</div>`;
     }
     metricEntries.sort(([leftKey], [rightKey]) => {
       if (leftKey === primaryMetric) return -1;
       if (rightKey === primaryMetric) return 1;
       return leftKey.localeCompare(rightKey);
     });
+    const rowStyle =
+      "display:flex;justify-content:space-between;align-items:center;gap:24px;padding:6px 0;";
+    const labelStyle = "font-weight:500;color:#697386;font-size:15px;";
+    const valueStyle =
+      "font-weight:600;color:#1A1F36;font-size:15px;font-variant-numeric:tabular-nums;white-space:nowrap;";
     return metricEntries
-      .map(
-        ([metricKey, metricValue]) =>
-          `<div>${metricKey}: ${formatMetric(metricValue as number)}</div>`,
-      )
+      .map(([metricKey, metricValue]) => {
+        const label = escapeHtml(humanizeMetricKey(metricKey));
+        const value = escapeHtml(
+          formatMetricDisplay(metricKey, metricValue as number),
+        );
+        return `<div style="${rowStyle}"><span style="${labelStyle}">${label}</span><span style="${valueStyle}">${value}</span></div>`;
+      })
       .join("");
   };
   return (
     <div
       ref={containerRef}
+      className="cool-globe-host"
       style={{
         position: "relative",
         height: "100%",
@@ -459,15 +501,27 @@ export const CoolGlobe = ({
         polygonLabel={(featureItem: object) => {
           const properties = ((featureItem as Feature).properties ??
             {}) as PolygonFeatureProperties;
+          if (zoomLevel > 0 && !properties.__regionName) {
+            return "";
+          }
           const countryCode =
             zoomLevel === 0 ? properties.__isoA2 : properties.__countryCode;
           const regionName = properties.__regionName;
-          const regionDisplayName = regionName ?? properties.name ?? "Unknown";
+          const displayNameRaw = regionName ?? properties.name ?? "Unknown";
+          const isoForNameStrip =
+            zoomLevel === 0
+              ? properties.__isoA2
+              : properties.__countryCode ?? properties.__isoA2;
+          const displayNameClean = stripIsoFromDisplayName(
+            String(displayNameRaw),
+            isoForNameStrip,
+          );
           const metricRecord = resolveMetric(countryCode, regionName);
           const metricRows = getMetricRowsHtml(metricRecord);
-          return `<div style="padding:6px 8px; font-size:12px; background:#111827; color:#f9fafb; border-radius:6px;">
-            <div style="font-weight:700;">${regionDisplayName}</div>
-            ${metricRows}
+          const title = escapeHtml(displayNameClean);
+          return `<div style="font-family:system-ui,-apple-system,'Segoe UI',Roboto,Inter,sans-serif;min-width:272px;max-width:320px;padding:20px;background:#ffffff;color:#1A1F36;border-radius:14px;box-shadow:0 8px 24px rgba(15,23,42,0.12);">
+            <div style="font-size:17px;font-weight:600;color:#1A1F36;line-height:1.25;margin-bottom:4px;">${title}</div>
+            <div style="margin-top:8px;">${metricRows}</div>
           </div>`;
         }}
         onPolygonHover={(featureItem: object | null) => {
