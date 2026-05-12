@@ -5,7 +5,7 @@ import type { StatisticsData } from "./index";
 const statisticsData: StatisticsData = {
   countries: {
     LT: { population: 2801000, visits: 85000 },
-    DE: { population: 83200000, visits: 2800000 },
+    DE: { population: 83200000, visits: 2800000, revenue: 124_700_000 },
     PL: { population: 38000000, visits: 1200000 },
   },
   regions: {
