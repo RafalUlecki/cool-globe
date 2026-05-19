@@ -50,7 +50,11 @@ function App() {
       >
         Reset Globe
       </button>
-      <CoolGlobe statisticsData={statisticsData} resetSignal={resetSignal} />
+      <CoolGlobe
+        statisticsData={statisticsData}
+        resetSignal={resetSignal}
+        preselectedCountry="LT"
+      />
     </div>
   );
 }
