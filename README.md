@@ -68,7 +68,11 @@ export default function Example() {
       >
         Reset globe
       </button>
-      <CoolGlobe statisticsData={statisticsData} resetSignal={resetSignal} />
+      <CoolGlobe
+        statisticsData={statisticsData}
+        resetSignal={resetSignal}
+        preselectedCountry="LT"
+      />
     </div>
   );
 }
@@ -77,7 +81,8 @@ export default function Example() {
 ## Props
 
 - `statisticsData` (required): country/region metric tree.
-- `resetSignal` (optional): when this value changes, globe view and selection state reset to default.
+- `resetSignal` (optional): when this value changes, globe view and selection state reset. With `preselectedCountry`, reset returns to that country instead of the world view.
+- `preselectedCountry` (optional): ISO 3166-1 alpha-2 code (e.g. `"LT"`). Auto-selects and zooms to this country once geo data and the globe are ready.
 - `primaryMetric` (optional, default: `"visits"`): metric key used for color scale.
 - `colorScale` (optional): `{ minColor, maxColor }`.
 - `countryNumericToIsoMap` (optional): fallback mapping from numeric country ids to ISO2.
