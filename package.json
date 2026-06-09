@@ -28,11 +28,14 @@
   "engines": {
     "node": ">=18"
   },
+  "homepage": "https://rafalulecki.github.io/cool-globe/",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --config vite.demo.config.ts",
     "build": "vite build && tsc -p tsconfig.build.json",
+    "build:demo": "vite build --config vite.demo.config.ts",
     "lint": "eslint .",
     "preview": "vite preview",
+    "preview:demo": "vite preview --config vite.demo.config.ts",
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
@@ -61,6 +64,9 @@
     "topojson-client": "^3.1.0"
   },
   "devDependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-globe.gl": "^2.37.1",
     "@eslint/js": "^9.39.1",
     "@types/d3-interpolate": "^3.0.4",
     "@types/d3-scale": "^4.0.9",
