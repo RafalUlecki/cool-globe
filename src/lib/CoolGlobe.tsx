@@ -63,6 +63,7 @@ const injectFloatTooltipOverride = () => {
 export const CoolGlobe = ({
   statisticsData,
   resetSignal,
+  autoRotate = false,
   preselectedCountry,
   countryNumericToIsoMap = {},
   countryNameToIsoMap = {},
@@ -246,7 +247,6 @@ export const CoolGlobe = ({
   useEffect(() => {
     const globeControls = globeRef.current?.controls?.();
     if (!globeControls) return;
-    globeControls.autoRotate = true;
     globeControls.autoRotateSpeed = 0.45;
     globeControls.enablePan = false;
     globeControls.enableZoom = true;
@@ -257,8 +257,9 @@ export const CoolGlobe = ({
   useEffect(() => {
     const globeControls = globeRef.current?.controls?.();
     if (!globeControls) return;
-    globeControls.autoRotate = !selectedCountryCode && zoomLevel === 0;
-  }, [selectedCountryCode, zoomLevel]);
+    globeControls.autoRotate =
+      autoRotate && !selectedCountryCode && zoomLevel === 0;
+  }, [autoRotate, selectedCountryCode, zoomLevel]);
 
   const focusCamera = useCallback((lat: number, lng: number, altitude: number) => {
     globeRef.current?.pointOfView({ lat, lng, altitude }, 650);
@@ -323,8 +324,6 @@ export const CoolGlobe = ({
     setZoomLevel(0);
     setSelectedCountryCode(undefined);
     setRegionFeatures([]);
-    const controls = globeRef.current?.controls?.();
-    if (controls) controls.autoRotate = true;
     focusCamera(20, 15, 2.6);
   }, [focusCamera, preselectedCountry, resetSignal, selectCountry]);
 

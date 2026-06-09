@@ -82,6 +82,7 @@ export default function Example() {
 
 - `statisticsData` (required): country/region metric tree.
 - `resetSignal` (optional): when this value changes, globe view and selection state reset. With `preselectedCountry`, reset returns to that country instead of the world view.
+- `autoRotate` (optional, default: `false`): when `true`, the globe spins slowly at the world view (zoom level 0, no country selected). Spinning stops on country/region selection, zoom-in, or globe click.
 - `preselectedCountry` (optional): ISO 3166-1 alpha-2 code (e.g. `"LT"`). Auto-selects and zooms to this country once geo data and the globe are ready.
 - `primaryMetric` (optional, default: `"visits"`): metric key used for color scale.
 - `colorScale` (optional): `{ minColor, maxColor }`.
