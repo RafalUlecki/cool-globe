@@ -35,7 +35,12 @@ import {
   normalizeCountryIso,
   stripIsoFromDisplayName,
 } from "./dashboardGlobe.utils";
-import type { CoolGlobeProps } from "./types";
+import type { CoolGlobeProps, GlobeSelection } from "./types";
+
+type SelectionOptions = {
+  focusCamera?: boolean;
+  notify?: boolean;
+};
 
 const FLOAT_TOOLTIP_OVERRIDE_ID = "cool-globe-float-tooltip-override";
 
@@ -65,11 +70,17 @@ export const CoolGlobe = ({
   resetSignal,
   autoRotate = false,
   preselectedCountry,
+  selectedCountry,
+  selectedRegion,
+  onSelectionChange,
   countryNumericToIsoMap = {},
   countryNameToIsoMap = {},
   primaryMetric = "visits",
   colorScale = DEFAULT_COLOR_SCALE,
 }: CoolGlobeProps) => {
+  const isCountryControlled = selectedCountry !== undefined;
+  const isRegionControlled = selectedRegion !== undefined;
+
   const globeRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const zoomDebounceRef = useRef<number | undefined>(undefined);
@@ -77,22 +88,48 @@ export const CoolGlobe = ({
   const globalAdmin1Ref = useRef<Feature[] | null>(null);
   const previousResetSignalRef = useRef<string | number | undefined>(resetSignal);
   const preselectionAppliedKeyRef = useRef<string | undefined>(undefined);
+  const isSyncingFromPropsRef = useRef(false);
+  const selectionRef = useRef<GlobeSelection>({ level: 0 });
+  const syncedControlledKeyRef = useRef<string | undefined>(undefined);
 
   const [globeReady, setGlobeReady] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<GlobeLevel>(0);
-  const [selectedCountryCode, setSelectedCountryCode] = useState<
+  const [internalCountryCode, setInternalCountryCode] = useState<
     string | undefined
   >();
-  const [selectedRegionName, setSelectedRegionName] = useState<
+  const [internalRegionName, setInternalRegionName] = useState<
     string | undefined
   >();
   const [hoveredFeature, setHoveredFeature] = useState<Feature | null>(null);
   const [countryFeatures, setCountryFeatures] = useState<Feature[]>([]);
   const [regionFeatures, setRegionFeatures] = useState<Feature[]>([]);
+  const effectiveCountryCode = isCountryControlled
+    ? selectedCountry
+      ? normalizeCountryIso(selectedCountry)
+      : undefined
+    : internalCountryCode;
+  const effectiveRegionName = isRegionControlled
+    ? (selectedRegion ?? undefined)
+    : internalRegionName;
+
+  selectionRef.current = {
+    level: zoomLevel,
+    countryCode: effectiveCountryCode,
+    regionName: effectiveRegionName,
+  };
+
   const [containerSize, setContainerSize] = useState({
     width: 900,
     height: 760,
   });
+
+  const notifySelectionChange = useCallback(
+    (selection: GlobeSelection) => {
+      if (isSyncingFromPropsRef.current) return;
+      onSelectionChange?.(selection);
+    },
+    [onSelectionChange],
+  );
 
   useEffect(() => {
     injectFloatTooltipOverride();
@@ -106,11 +143,11 @@ export const CoolGlobe = ({
     [primaryMetric, statisticsData.countries],
   );
   const regionsMetricValues = useMemo(() => {
-    if (!selectedCountryCode) return [];
-    return Object.values(statisticsData.regions[selectedCountryCode] ?? {}).map(
+    if (!effectiveCountryCode) return [];
+    return Object.values(statisticsData.regions[effectiveCountryCode] ?? {}).map(
       (metrics) => getMetricValue(metrics, primaryMetric),
     );
-  }, [selectedCountryCode, primaryMetric, statisticsData.regions]);
+  }, [effectiveCountryCode, primaryMetric, statisticsData.regions]);
   const countryColorResolver = useMemo(
     () => createColorResolver(countriesMetricValues, colorScale),
     [countriesMetricValues, colorScale],
@@ -193,11 +230,11 @@ export const CoolGlobe = ({
   }, []);
 
   useEffect(() => {
-    if (!selectedCountryCode) {
+    if (!effectiveCountryCode) {
       setRegionFeatures([]);
       return;
     }
-    const cachedFeatures = regionCacheRef.current[selectedCountryCode];
+    const cachedFeatures = regionCacheRef.current[effectiveCountryCode];
     if (cachedFeatures) {
       setRegionFeatures(cachedFeatures);
       return;
@@ -214,7 +251,7 @@ export const CoolGlobe = ({
             string,
             unknown
           >;
-          return props.iso_a2 === selectedCountryCode;
+          return props.iso_a2 === effectiveCountryCode;
         },
       ) as Feature[];
       const mapped = filtered.map((regionFeature) => {
@@ -227,22 +264,22 @@ export const CoolGlobe = ({
           ...regionFeature,
           properties: {
             ...sourceProperties,
-            __countryCode: selectedCountryCode,
+            __countryCode: effectiveCountryCode,
             __regionName: rawName,
             name: rawName,
           },
         };
       }) as Feature[];
-      regionCacheRef.current[selectedCountryCode] = mapped;
+      regionCacheRef.current[effectiveCountryCode] = mapped;
       setRegionFeatures(mapped);
     };
     void loadRegions();
-  }, [selectedCountryCode]);
+  }, [effectiveCountryCode]);
 
   useEffect(() => {
-    if (selectedRegionName && zoomLevel < 2) return void setZoomLevel(2);
-    if (selectedCountryCode && zoomLevel < 1) setZoomLevel(1);
-  }, [selectedCountryCode, selectedRegionName, zoomLevel]);
+    if (effectiveRegionName && zoomLevel < 2) return void setZoomLevel(2);
+    if (effectiveCountryCode && zoomLevel < 1) setZoomLevel(1);
+  }, [effectiveCountryCode, effectiveRegionName, zoomLevel]);
 
   useEffect(() => {
     const globeControls = globeRef.current?.controls?.();
@@ -258,8 +295,8 @@ export const CoolGlobe = ({
     const globeControls = globeRef.current?.controls?.();
     if (!globeControls) return;
     globeControls.autoRotate =
-      autoRotate && !selectedCountryCode && zoomLevel === 0;
-  }, [autoRotate, selectedCountryCode, zoomLevel]);
+      autoRotate && !effectiveCountryCode && zoomLevel === 0;
+  }, [autoRotate, effectiveCountryCode, zoomLevel]);
 
   const focusCamera = useCallback((lat: number, lng: number, altitude: number) => {
     globeRef.current?.pointOfView({ lat, lng, altitude }, 650);
@@ -274,43 +311,140 @@ export const CoolGlobe = ({
     (
       countryCode: string,
       countryFeature?: Feature,
-      options?: { focusCamera?: boolean },
+      options?: SelectionOptions,
     ) => {
       const normalized = normalizeCountryIso(countryCode);
       if (!normalized) return;
 
       stopAutoRotate();
       setZoomLevel(1);
-      setSelectedCountryCode(normalized);
-      setSelectedRegionName(undefined);
+      if (!isCountryControlled) setInternalCountryCode(normalized);
+      if (!isRegionControlled) setInternalRegionName(undefined);
 
-      if (options?.focusCamera === false) return;
+      if (options?.focusCamera !== false) {
+        const countryFeatureToFocus =
+          countryFeature ??
+          findCountryFeatureByIso(
+            countryFeatures,
+            normalized,
+            countryNameToIsoMap,
+          );
+        const bounds = countryFeatureToFocus
+          ? getFeatureBounds(countryFeatureToFocus)
+          : undefined;
+        if (bounds) {
+          focusCamera(
+            (bounds.minLat + bounds.maxLat) / 2,
+            (bounds.minLng + bounds.maxLng) / 2,
+            getAltitudeFromBounds(bounds),
+          );
+        }
+      }
 
-      const feature =
-        countryFeature ??
-        findCountryFeatureByIso(
-          countryFeatures,
-          normalized,
-          countryNameToIsoMap,
-        );
-      const bounds = feature ? getFeatureBounds(feature) : undefined;
-      if (bounds) {
-        focusCamera(
-          (bounds.minLat + bounds.maxLat) / 2,
-          (bounds.minLng + bounds.maxLng) / 2,
-          getAltitudeFromBounds(bounds),
-        );
+      if (options?.notify !== false) {
+        notifySelectionChange({
+          level: 1,
+          countryCode: normalized,
+          regionName: undefined,
+        });
       }
     },
-    [countryFeatures, countryNameToIsoMap, focusCamera, stopAutoRotate],
+    [
+      countryFeatures,
+      countryNameToIsoMap,
+      focusCamera,
+      isCountryControlled,
+      isRegionControlled,
+      notifySelectionChange,
+      stopAutoRotate,
+    ],
+  );
+
+  const selectRegion = useCallback(
+    (
+      regionName: string,
+      regionFeature?: Feature,
+      options?: SelectionOptions & { countryCode?: string },
+    ) => {
+      stopAutoRotate();
+      setZoomLevel(2);
+      if (!isRegionControlled) setInternalRegionName(regionName);
+
+      if (options?.focusCamera !== false && regionFeature) {
+        const bounds = getFeatureBounds(regionFeature);
+        if (bounds) {
+          focusCamera(
+            (bounds.minLat + bounds.maxLat) / 2,
+            (bounds.minLng + bounds.maxLng) / 2,
+            Math.max(0.2, getAltitudeFromBounds(bounds) * 0.52),
+          );
+        }
+      }
+
+      if (options?.notify !== false) {
+        notifySelectionChange({
+          level: 2,
+          countryCode: options?.countryCode ?? selectionRef.current.countryCode,
+          regionName,
+        });
+      }
+    },
+    [focusCamera, isRegionControlled, notifySelectionChange, stopAutoRotate],
+  );
+
+  const clearSelection = useCallback(
+    (options?: SelectionOptions & { keepCountry?: boolean }) => {
+      stopAutoRotate();
+
+      if (options?.keepCountry) {
+        setZoomLevel(1);
+        if (!isRegionControlled) setInternalRegionName(undefined);
+        if (options?.notify !== false) {
+          notifySelectionChange({
+            level: 1,
+            countryCode: selectionRef.current.countryCode,
+            regionName: undefined,
+          });
+        }
+        return;
+      }
+
+      setZoomLevel(0);
+      if (!isCountryControlled) setInternalCountryCode(undefined);
+      if (!isRegionControlled) setInternalRegionName(undefined);
+      setRegionFeatures([]);
+
+      if (options?.focusCamera !== false) {
+        focusCamera(20, 15, 2.6);
+      }
+
+      if (options?.notify !== false) {
+        notifySelectionChange({ level: 0 });
+      }
+    },
+    [
+      focusCamera,
+      isCountryControlled,
+      isRegionControlled,
+      notifySelectionChange,
+      stopAutoRotate,
+    ],
   );
 
   useEffect(() => {
     if (resetSignal === previousResetSignalRef.current) return;
     previousResetSignalRef.current = resetSignal;
-    setSelectedRegionName(undefined);
     setHoveredFeature(null);
     preselectionAppliedKeyRef.current = undefined;
+
+    if (isCountryControlled) {
+      syncedControlledKeyRef.current = undefined;
+      if (!isRegionControlled) setInternalRegionName(undefined);
+      notifySelectionChange({ level: 0 });
+      return;
+    }
+
+    if (!isRegionControlled) setInternalRegionName(undefined);
 
     const normalizedPreselection = preselectedCountry?.trim()
       ? normalizeCountryIso(preselectedCountry)
@@ -321,13 +455,20 @@ export const CoolGlobe = ({
       return;
     }
 
-    setZoomLevel(0);
-    setSelectedCountryCode(undefined);
-    setRegionFeatures([]);
-    focusCamera(20, 15, 2.6);
-  }, [focusCamera, preselectedCountry, resetSignal, selectCountry]);
+    clearSelection();
+  }, [
+    clearSelection,
+    isCountryControlled,
+    isRegionControlled,
+    notifySelectionChange,
+    preselectedCountry,
+    resetSignal,
+    selectCountry,
+  ]);
 
   useEffect(() => {
+    if (isCountryControlled) return;
+
     const normalized = preselectedCountry?.trim()
       ? normalizeCountryIso(preselectedCountry)
       : undefined;
@@ -347,9 +488,110 @@ export const CoolGlobe = ({
     countryFeatures,
     countryNameToIsoMap,
     globeReady,
+    isCountryControlled,
     preselectedCountry,
     resetSignal,
     selectCountry,
+  ]);
+
+  useEffect(() => {
+    if (!globeReady || !countryFeatures.length) return;
+    if (!isCountryControlled && !isRegionControlled) return;
+
+    const pendingRegionSelection =
+      isRegionControlled &&
+      Boolean(selectedRegion) &&
+      Boolean(effectiveCountryCode) &&
+      !regionFeatures.some((featureItem) => {
+        const properties = (featureItem.properties ??
+          {}) as PolygonFeatureProperties;
+        return properties.__regionName === selectedRegion;
+      });
+
+    const syncKey = [
+      isCountryControlled ? String(selectedCountry ?? "") : "uncontrolled",
+      isRegionControlled ? String(selectedRegion ?? "") : "uncontrolled",
+      effectiveCountryCode ?? "",
+      regionFeatures.length,
+    ].join("|");
+
+    if (!pendingRegionSelection && syncedControlledKeyRef.current === syncKey) {
+      return;
+    }
+
+    isSyncingFromPropsRef.current = true;
+
+    if (isCountryControlled) {
+      if (selectedCountry) {
+        const normalized = normalizeCountryIso(selectedCountry);
+        if (normalized) {
+          const countryFeature = findCountryFeatureByIso(
+            countryFeatures,
+            normalized,
+            countryNameToIsoMap,
+          );
+          selectCountry(normalized, countryFeature, { notify: false });
+        }
+      } else {
+        clearSelection({ notify: false });
+        syncedControlledKeyRef.current = syncKey;
+        isSyncingFromPropsRef.current = false;
+        return;
+      }
+    }
+
+    if (isRegionControlled && effectiveCountryCode) {
+      if (selectedRegion) {
+        const regionFeature = regionFeatures.find((featureItem) => {
+          const properties = (featureItem.properties ??
+            {}) as PolygonFeatureProperties;
+          return properties.__regionName === selectedRegion;
+        });
+        if (regionFeature) {
+          selectRegion(selectedRegion, regionFeature, {
+            countryCode: effectiveCountryCode,
+            notify: false,
+          });
+        } else if (pendingRegionSelection) {
+          isSyncingFromPropsRef.current = false;
+          return;
+        }
+      } else {
+        setZoomLevel(1);
+        const countryFeature = findCountryFeatureByIso(
+          countryFeatures,
+          effectiveCountryCode,
+          countryNameToIsoMap,
+        );
+        if (countryFeature) {
+          const bounds = getFeatureBounds(countryFeature);
+          if (bounds) {
+            focusCamera(
+              (bounds.minLat + bounds.maxLat) / 2,
+              (bounds.minLng + bounds.maxLng) / 2,
+              getAltitudeFromBounds(bounds),
+            );
+          }
+        }
+      }
+    }
+
+    syncedControlledKeyRef.current = syncKey;
+    isSyncingFromPropsRef.current = false;
+  }, [
+    clearSelection,
+    countryFeatures,
+    countryNameToIsoMap,
+    effectiveCountryCode,
+    focusCamera,
+    globeReady,
+    isCountryControlled,
+    isRegionControlled,
+    regionFeatures,
+    selectCountry,
+    selectRegion,
+    selectedCountry,
+    selectedRegion,
   ]);
 
   const applyLightGlobeMaterial = () => {
@@ -371,7 +613,14 @@ export const CoolGlobe = ({
       const altitude = globeRef.current?.pointOfView?.().altitude ?? 2.4;
       const nextLevel = getZoomLevelByAltitude(altitude);
       setZoomLevel(nextLevel);
-      if (nextLevel <= 0) setSelectedRegionName(undefined);
+      if (nextLevel <= 0 && selectionRef.current.regionName) {
+        if (!isRegionControlled) setInternalRegionName(undefined);
+        notifySelectionChange({
+          level: nextLevel,
+          countryCode: selectionRef.current.countryCode,
+          regionName: undefined,
+        });
+      }
     }, 120);
   };
   const handlePolygonClick = (featureItem: Feature) => {
@@ -393,18 +642,9 @@ export const CoolGlobe = ({
     if (zoomLevel >= 1) {
       const regionName = properties.__regionName;
       if (!regionName) return;
-      stopAutoRotate();
-      setZoomLevel(2);
-      setSelectedRegionName(regionName);
-      const bounds = getFeatureBounds(featureItem);
-      if (bounds) {
-        focusCamera(
-          (bounds.minLat + bounds.maxLat) / 2,
-          (bounds.minLng + bounds.maxLng) / 2,
-          Math.max(0.2, getAltitudeFromBounds(bounds) * 0.52),
-        );
-        return;
-      }
+      selectRegion(regionName, featureItem, {
+        countryCode: effectiveCountryCode,
+      });
     }
   };
 
@@ -545,7 +785,7 @@ export const CoolGlobe = ({
         onGlobeReady={() => {
           applyLightGlobeMaterial();
           setGlobeReady(true);
-          if (!preselectedCountry?.trim()) {
+          if (!preselectedCountry?.trim() && !isCountryControlled) {
             focusCamera(20, 15, 2.6);
           }
         }}

@@ -1,5 +1,5 @@
 export { CoolGlobe } from "./lib/CoolGlobe";
-export type { CoolGlobeProps } from "./lib/types";
+export type { CoolGlobeProps, GlobeSelection } from "./lib/types";
 export type {
   ColorScaleInput,
   GlobeLevel,
