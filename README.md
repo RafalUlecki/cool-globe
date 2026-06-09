@@ -2,6 +2,8 @@
 
 `cool-globe` is an interactive React globe library for country and region analytics, drill-down exploration, and metric-based geospatial dashboards.
 
+**[Live demo](https://rafalulecki.github.io/cool-globe/)** · [npm](https://www.npmjs.com/package/cool-globe) · [GitHub](https://github.com/RafalUlecki/cool-globe)
+
 ![cool-globe banner](https://raw.githubusercontent.com/RafalUlecki/cool-globe/master/assets/banner.png)
 
 ## Overview
@@ -142,14 +144,36 @@ When using controlled selection with `resetSignal`, update `selectedCountry` / `
 
 ```bash
 npm install
-npm run dev
+npm run dev          # local landing page + playground
+npm run build:demo   # production demo build (GitHub Pages)
+npm run preview:demo # preview demo build locally
 ```
 
 ## Build
 
+Library build (for npm publish):
+
 ```bash
 npm run build
 ```
+
+## GitHub Pages
+
+The interactive demo deploys automatically to [rafalulecki.github.io/cool-globe](https://rafalulecki.github.io/cool-globe/) when changes are pushed to `main`.
+
+One-time setup in the GitHub repo:
+
+1. Go to **Settings → Pages**
+2. Set **Source** to **GitHub Actions**
+3. Push to `main` — the `deploy-demo.yml` workflow builds `dist-demo/` and publishes it
+
+Local preview uses the same base path as production (`/cool-globe/`):
+
+```bash
+npm run build:demo && npm run preview:demo
+```
+
+Then open `http://localhost:4173/cool-globe/`.
 
 ## License
 
