@@ -133,7 +133,7 @@ export const CoolGlobe = ({
     string | undefined
   >();
   const [hoveredFeature, setHoveredFeature] = useState<Feature | null>(null);
-  const [countryFeatures, setCountryFeatures] = useState<Feature[]>([]);
+  const [rawCountryFeatures, setRawCountryFeatures] = useState<Feature[]>([]);
   const [regionFeatures, setRegionFeatures] = useState<Feature[]>([]);
   const effectiveCountryCode = isCountryControlled
     ? selectedCountry
@@ -187,6 +187,45 @@ export const CoolGlobe = ({
   const regionColorResolver = useMemo(
     () => createColorResolver(regionsMetricValues, colorScale),
     [regionsMetricValues, colorScale],
+  );
+
+  const countryFeatures = useMemo(
+    () =>
+      rawCountryFeatures.map((countryFeature) => {
+        const rawId = String(countryFeature.id ?? "");
+        const properties = (countryFeature.properties ??
+          {}) as CountryFeatureProperties;
+        const displayName =
+          String(
+            properties.name ??
+              properties.NAME ??
+              properties.name_en ??
+              properties.ADMIN ??
+              "",
+          ).trim() || `Country ${rawId}`;
+        const normalizedName = displayName.toLowerCase();
+        const candidateIsoA2 = String(
+          properties.iso_a2 ?? properties.ISO_A2 ?? properties.iso_a2_eh ?? "",
+        )
+          .trim()
+          .toUpperCase();
+        const isoA2 =
+          countryNumericToIsoMap[rawId] ??
+          countryNameToIsoMap[normalizedName] ??
+          (candidateIsoA2 && candidateIsoA2 !== "-99"
+            ? candidateIsoA2
+            : undefined) ??
+          (rawId.length === 2 ? rawId.toUpperCase() : rawId);
+        return {
+          ...countryFeature,
+          properties: {
+            ...properties,
+            __isoA2: isoA2,
+            name: displayName || isoA2 || `Country ${rawId}`,
+          },
+        };
+      }) as Feature[],
+    [countryNameToIsoMap, countryNumericToIsoMap, rawCountryFeatures],
   );
 
   useEffect(() => {
@@ -245,43 +284,11 @@ export const CoolGlobe = ({
       if (lastError) {
         onError?.(lastError);
         console.warn("[cool-globe]", lastError.message);
-        setCountryFeatures([]);
+        setRawCountryFeatures([]);
         return;
       }
 
-      const enriched = features.map((countryFeature) => {
-        const rawId = String(countryFeature.id ?? "");
-        const properties = (countryFeature.properties ??
-          {}) as CountryFeatureProperties;
-        const displayName =
-          String(
-            properties.name ??
-              properties.NAME ??
-              properties.name_en ??
-              properties.ADMIN ??
-              "",
-          ).trim() || `Country ${rawId}`;
-        const normalizedName = displayName.toLowerCase();
-        const candidateIsoA2 = String(
-          properties.iso_a2 ?? properties.ISO_A2 ?? properties.iso_a2_eh ?? "",
-        )
-          .trim()
-          .toUpperCase();
-        const isoA2 =
-          countryNumericToIsoMap[rawId] ??
-          countryNameToIsoMap[normalizedName] ??
-          (candidateIsoA2 && candidateIsoA2 !== "-99" ? candidateIsoA2 : undefined) ??
-          (rawId.length === 2 ? rawId.toUpperCase() : rawId);
-        return {
-          ...countryFeature,
-          properties: {
-            ...properties,
-            __isoA2: isoA2,
-            name: displayName || isoA2 || `Country ${rawId}`,
-          },
-        };
-      }) as Feature[];
-      setCountryFeatures(enriched);
+      setRawCountryFeatures(features);
     };
 
     void loadCountries();
