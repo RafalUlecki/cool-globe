@@ -132,13 +132,7 @@ export const getZoomLevelByAltitude = (altitude: number): GlobeLevel => {
 export const formatMetric = (value: number): string =>
   new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 
-export const escapeHtml = (raw: string): string =>
-  raw
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+export { escapeHtml } from "./escapeHtml.js";
 
 /** Removes trailing ISO-3166-1 alpha-2 codes from labels like "Germany (DE)" or "Bayern — DE". */
 export const stripIsoFromDisplayName = (

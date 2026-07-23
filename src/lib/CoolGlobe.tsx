@@ -950,6 +950,7 @@ export const CoolGlobe = ({
             ? "rgba(51,65,85,0.98)"
             : "rgba(156,163,175,0.95)";
         }}
+        // SECURITY: polygonLabel returns HTML. Every dynamic string must go through escapeHtml.
         polygonLabel={(featureItem: object) => {
           const properties = ((featureItem as Feature).properties ??
             {}) as PolygonFeatureProperties;

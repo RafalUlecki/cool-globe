@@ -6,3 +6,4 @@ export type {
   MetricRecord,
   StatisticsData,
 } from "./lib/dashboardGlobe.types";
+export { escapeHtml } from "./lib/escapeHtml.js";

@@ -34,6 +34,7 @@
     "build": "vite build && tsc -p tsconfig.build.json",
     "build:demo": "vite build --config vite.demo.config.ts",
     "lint": "eslint .",
+    "test:escape": "node --test scripts/verify-escape-html.mjs",
     "preview": "vite preview",
     "preview:demo": "vite preview --config vite.demo.config.ts",
     "prepublishOnly": "npm run build"
