@@ -44,6 +44,23 @@ type SelectionOptions = {
 
 const FLOAT_TOOLTIP_OVERRIDE_ID = "cool-globe-float-tooltip-override";
 
+/** Shared in-flight Admin-1 load so rapid country switches do not double-fetch. */
+let admin1FeaturesPromise: Promise<Feature[]> | null = null;
+
+const loadGlobalAdmin1Features = (): Promise<Feature[]> => {
+  if (!admin1FeaturesPromise) {
+    admin1FeaturesPromise = (async () => {
+      const response = await fetch(GLOBAL_ADMIN1_GEOJSON_URL);
+      const admin1GeoJson = (await response.json()) as FeatureCollection;
+      return admin1GeoJson.features as Feature[];
+    })().catch((error) => {
+      admin1FeaturesPromise = null;
+      throw error;
+    });
+  }
+  return admin1FeaturesPromise;
+};
+
 const injectFloatTooltipOverride = () => {
   if (typeof document === "undefined") return;
   if (document.getElementById(FLOAT_TOOLTIP_OVERRIDE_ID)) return;
@@ -234,46 +251,58 @@ export const CoolGlobe = ({
       setRegionFeatures([]);
       return;
     }
-    const cachedFeatures = regionCacheRef.current[effectiveCountryCode];
+    const countryCode = effectiveCountryCode;
+    const cachedFeatures = regionCacheRef.current[countryCode];
     if (cachedFeatures) {
       setRegionFeatures(cachedFeatures);
       return;
     }
+
+    let cancelled = false;
+
     const loadRegions = async () => {
-      if (!globalAdmin1Ref.current) {
-        const response = await fetch(GLOBAL_ADMIN1_GEOJSON_URL);
-        const admin1GeoJson = (await response.json()) as FeatureCollection;
-        globalAdmin1Ref.current = admin1GeoJson.features as Feature[];
-      }
-      const filtered = (globalAdmin1Ref.current ?? []).filter(
-        (regionFeature) => {
-          const props = (regionFeature.properties ?? {}) as Record<
+      try {
+        if (!globalAdmin1Ref.current) {
+          globalAdmin1Ref.current = await loadGlobalAdmin1Features();
+        }
+        if (cancelled) return;
+
+        const filtered = (globalAdmin1Ref.current ?? []).filter(
+          (regionFeature) => {
+            const props = (regionFeature.properties ?? {}) as Record<
+              string,
+              unknown
+            >;
+            return props.iso_a2 === countryCode;
+          },
+        ) as Feature[];
+        const mapped = filtered.map((regionFeature) => {
+          const sourceProperties = (regionFeature.properties ?? {}) as Record<
             string,
             unknown
           >;
-          return props.iso_a2 === effectiveCountryCode;
-        },
-      ) as Feature[];
-      const mapped = filtered.map((regionFeature) => {
-        const sourceProperties = (regionFeature.properties ?? {}) as Record<
-          string,
-          unknown
-        >;
-        const rawName = String(sourceProperties.name ?? "").trim();
-        return {
-          ...regionFeature,
-          properties: {
-            ...sourceProperties,
-            __countryCode: effectiveCountryCode,
-            __regionName: rawName,
-            name: rawName,
-          },
-        };
-      }) as Feature[];
-      regionCacheRef.current[effectiveCountryCode] = mapped;
-      setRegionFeatures(mapped);
+          const rawName = String(sourceProperties.name ?? "").trim();
+          return {
+            ...regionFeature,
+            properties: {
+              ...sourceProperties,
+              __countryCode: countryCode,
+              __regionName: rawName,
+              name: rawName,
+            },
+          };
+        }) as Feature[];
+        regionCacheRef.current[countryCode] = mapped;
+        if (!cancelled) setRegionFeatures(mapped);
+      } catch {
+        // S1 adds user-facing error handling; ignore aborted/stale failures here.
+      }
     };
+
     void loadRegions();
+    return () => {
+      cancelled = true;
+    };
   }, [effectiveCountryCode]);
 
   useEffect(() => {
