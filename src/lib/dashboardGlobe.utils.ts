@@ -96,8 +96,13 @@ export const getMetricValue = (
 
 export const createColorResolver = (values: number[], colorScale: ColorScaleInput) => {
   if (!values.length) return () => colorScale.minColor;
-  const minValue = Math.min(...values);
-  const maxValue = Math.max(...values);
+  let minValue = values[0]!;
+  let maxValue = values[0]!;
+  for (let index = 1; index < values.length; index += 1) {
+    const value = values[index]!;
+    if (value < minValue) minValue = value;
+    if (value > maxValue) maxValue = value;
+  }
   if (minValue === maxValue) return () => colorScale.maxColor;
   const normalizer = scaleLinear().domain([minValue, maxValue]).range([0, 1]);
   const interpolator = interpolateRgb(colorScale.minColor, colorScale.maxColor);
