@@ -51,7 +51,15 @@ const loadGlobalAdmin1Features = (): Promise<Feature[]> => {
   if (!admin1FeaturesPromise) {
     admin1FeaturesPromise = (async () => {
       const response = await fetch(GLOBAL_ADMIN1_GEOJSON_URL);
+      if (!response.ok) {
+        throw new Error(
+          `Failed to load Admin-1 GeoJSON (${response.status}): ${GLOBAL_ADMIN1_GEOJSON_URL}`,
+        );
+      }
       const admin1GeoJson = (await response.json()) as FeatureCollection;
+      if (!Array.isArray(admin1GeoJson.features)) {
+        throw new Error("Admin-1 GeoJSON response missing features array");
+      }
       return admin1GeoJson.features as Feature[];
     })().catch((error) => {
       admin1FeaturesPromise = null;
@@ -90,6 +98,7 @@ export const CoolGlobe = ({
   selectedCountry,
   selectedRegion,
   onSelectionChange,
+  onError,
   countryNumericToIsoMap = {},
   countryNameToIsoMap = {},
   primaryMetric = "visits",
@@ -294,8 +303,15 @@ export const CoolGlobe = ({
         }) as Feature[];
         regionCacheRef.current[countryCode] = mapped;
         if (!cancelled) setRegionFeatures(mapped);
-      } catch {
-        // S1 adds user-facing error handling; ignore aborted/stale failures here.
+      } catch (error) {
+        if (cancelled) return;
+        setRegionFeatures([]);
+        const normalized =
+          error instanceof Error
+            ? error
+            : new Error("Failed to load Admin-1 regions");
+        onError?.(normalized);
+        console.warn("[cool-globe]", normalized.message);
       }
     };
 
@@ -303,7 +319,7 @@ export const CoolGlobe = ({
     return () => {
       cancelled = true;
     };
-  }, [effectiveCountryCode]);
+  }, [effectiveCountryCode, onError]);
 
   useEffect(() => {
     if (effectiveRegionName && zoomLevel < 2) return void setZoomLevel(2);

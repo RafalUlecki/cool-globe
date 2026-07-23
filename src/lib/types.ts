@@ -18,6 +18,8 @@ export interface CoolGlobeProps {
   selectedCountry?: string | null;
   selectedRegion?: string | null;
   onSelectionChange?: (selection: GlobeSelection) => void;
+  /** Called when a geo asset fetch fails (countries or Admin-1). */
+  onError?: (error: Error) => void;
   primaryMetric?: string;
   colorScale?: ColorScaleInput;
   countryNumericToIsoMap?: Record<string, string>;
