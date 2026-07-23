@@ -766,12 +766,19 @@ export const CoolGlobe = ({
     }
   };
 
-  const selectedPolygonData =
-    zoomLevel === 0
-      ? countryFeatures
-      : regionFeatures.length
-        ? [...countryFeatures, ...regionFeatures]
-        : countryFeatures;
+  const selectedPolygonData = useMemo(() => {
+    if (zoomLevel === 0) return countryFeatures;
+    if (regionFeatures.length) return regionFeatures;
+    // Regions still loading: render only the selected country outline, not the full world.
+    if (effectiveCountryCode) {
+      return countryFeatures.filter((featureItem) => {
+        const properties = (featureItem.properties ??
+          {}) as PolygonFeatureProperties;
+        return properties.__isoA2 === effectiveCountryCode;
+      });
+    }
+    return countryFeatures;
+  }, [countryFeatures, effectiveCountryCode, regionFeatures, zoomLevel]);
 
   const resolveMetric = (
     countryCode?: string,
