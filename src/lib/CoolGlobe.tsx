@@ -44,29 +44,32 @@ type SelectionOptions = {
 
 const FLOAT_TOOLTIP_OVERRIDE_ID = "cool-globe-float-tooltip-override";
 
-/** Shared in-flight Admin-1 load so rapid country switches do not double-fetch. */
-let admin1FeaturesPromise: Promise<Feature[]> | null = null;
+/** Shared in-flight Admin-1 loads keyed by URL so rapid country switches do not double-fetch. */
+const admin1FeaturesPromises = new Map<string, Promise<Feature[]>>();
 
-const loadGlobalAdmin1Features = (): Promise<Feature[]> => {
-  if (!admin1FeaturesPromise) {
-    admin1FeaturesPromise = (async () => {
-      const response = await fetch(GLOBAL_ADMIN1_GEOJSON_URL);
-      if (!response.ok) {
-        throw new Error(
-          `Failed to load Admin-1 GeoJSON (${response.status}): ${GLOBAL_ADMIN1_GEOJSON_URL}`,
-        );
-      }
-      const admin1GeoJson = (await response.json()) as FeatureCollection;
-      if (!Array.isArray(admin1GeoJson.features)) {
-        throw new Error("Admin-1 GeoJSON response missing features array");
-      }
-      return admin1GeoJson.features as Feature[];
-    })().catch((error) => {
-      admin1FeaturesPromise = null;
-      throw error;
-    });
-  }
-  return admin1FeaturesPromise;
+const loadGlobalAdmin1Features = (url: string): Promise<Feature[]> => {
+  const existing = admin1FeaturesPromises.get(url);
+  if (existing) return existing;
+
+  const promise = (async () => {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(
+        `Failed to load Admin-1 GeoJSON (${response.status}): ${url}`,
+      );
+    }
+    const admin1GeoJson = (await response.json()) as FeatureCollection;
+    if (!Array.isArray(admin1GeoJson.features)) {
+      throw new Error("Admin-1 GeoJSON response missing features array");
+    }
+    return admin1GeoJson.features as Feature[];
+  })().catch((error) => {
+    admin1FeaturesPromises.delete(url);
+    throw error;
+  });
+
+  admin1FeaturesPromises.set(url, promise);
+  return promise;
 };
 
 const injectFloatTooltipOverride = () => {
@@ -99,6 +102,9 @@ export const CoolGlobe = ({
   selectedRegion,
   onSelectionChange,
   onError,
+  fetchRegionsForCountry,
+  admin1GeoJsonUrl = GLOBAL_ADMIN1_GEOJSON_URL,
+  onRegionsLoadingChange,
   countryNumericToIsoMap = {},
   countryNameToIsoMap = {},
   primaryMetric = "visits",
@@ -301,49 +307,65 @@ export const CoolGlobe = ({
   useEffect(() => {
     if (!effectiveCountryCode) {
       setRegionFeatures([]);
+      onRegionsLoadingChange?.(false);
       return;
     }
     const countryCode = effectiveCountryCode;
     const cachedFeatures = regionCacheRef.current[countryCode];
     if (cachedFeatures) {
       setRegionFeatures(cachedFeatures);
+      onRegionsLoadingChange?.(false);
       return;
     }
 
     let cancelled = false;
+    onRegionsLoadingChange?.(true);
+
+    const mapRegionFeatures = (features: Feature[]): Feature[] =>
+      features.map((regionFeature) => {
+        const sourceProperties = (regionFeature.properties ?? {}) as Record<
+          string,
+          unknown
+        >;
+        const rawName = String(sourceProperties.name ?? "").trim();
+        return {
+          ...regionFeature,
+          properties: {
+            ...sourceProperties,
+            __countryCode: countryCode,
+            __regionName: rawName,
+            name: rawName,
+          },
+        };
+      }) as Feature[];
 
     const loadRegions = async () => {
       try {
-        if (!globalAdmin1Ref.current) {
-          globalAdmin1Ref.current = await loadGlobalAdmin1Features();
-        }
-        if (cancelled) return;
+        let mapped: Feature[];
 
-        const filtered = (globalAdmin1Ref.current ?? []).filter(
-          (regionFeature) => {
-            const props = (regionFeature.properties ?? {}) as Record<
-              string,
-              unknown
-            >;
-            return props.iso_a2 === countryCode;
-          },
-        ) as Feature[];
-        const mapped = filtered.map((regionFeature) => {
-          const sourceProperties = (regionFeature.properties ?? {}) as Record<
-            string,
-            unknown
-          >;
-          const rawName = String(sourceProperties.name ?? "").trim();
-          return {
-            ...regionFeature,
-            properties: {
-              ...sourceProperties,
-              __countryCode: countryCode,
-              __regionName: rawName,
-              name: rawName,
+        if (fetchRegionsForCountry) {
+          const loaded = await fetchRegionsForCountry(countryCode);
+          if (cancelled) return;
+          mapped = mapRegionFeatures(loaded);
+        } else {
+          if (!globalAdmin1Ref.current) {
+            globalAdmin1Ref.current =
+              await loadGlobalAdmin1Features(admin1GeoJsonUrl);
+          }
+          if (cancelled) return;
+
+          const filtered = (globalAdmin1Ref.current ?? []).filter(
+            (regionFeature) => {
+              const props = (regionFeature.properties ?? {}) as Record<
+                string,
+                unknown
+              >;
+              return props.iso_a2 === countryCode;
             },
-          };
-        }) as Feature[];
+          ) as Feature[];
+          mapped = mapRegionFeatures(filtered);
+        }
+
         regionCacheRef.current[countryCode] = mapped;
         if (!cancelled) setRegionFeatures(mapped);
       } catch (error) {
@@ -355,6 +377,8 @@ export const CoolGlobe = ({
             : new Error("Failed to load Admin-1 regions");
         onError?.(normalized);
         console.warn("[cool-globe]", normalized.message);
+      } finally {
+        if (!cancelled) onRegionsLoadingChange?.(false);
       }
     };
 
@@ -362,7 +386,13 @@ export const CoolGlobe = ({
     return () => {
       cancelled = true;
     };
-  }, [effectiveCountryCode, onError]);
+  }, [
+    admin1GeoJsonUrl,
+    effectiveCountryCode,
+    fetchRegionsForCountry,
+    onError,
+    onRegionsLoadingChange,
+  ]);
 
   useEffect(() => {
     if (effectiveRegionName && zoomLevel < 2) return void setZoomLevel(2);
