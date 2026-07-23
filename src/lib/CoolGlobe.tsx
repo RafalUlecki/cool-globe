@@ -51,6 +51,7 @@ type CoolGlobeMethods = GlobeMethods & {
 
 const FLOAT_TOOLTIP_OVERRIDE_ID = "cool-globe-float-tooltip-override";
 const REGION_CACHE_LIMIT = 8;
+let floatTooltipOverrideUsers = 0;
 
 const getFeatureHoverKey = (featureItem: Feature | null): string | null => {
   if (!featureItem) return null;
@@ -107,6 +108,7 @@ const loadGlobalAdmin1Features = (url: string): Promise<Feature[]> => {
 
 const injectFloatTooltipOverride = () => {
   if (typeof document === "undefined") return;
+  floatTooltipOverrideUsers += 1;
   if (document.getElementById(FLOAT_TOOLTIP_OVERRIDE_ID)) return;
   const style = document.createElement("style");
   style.id = FLOAT_TOOLTIP_OVERRIDE_ID;
@@ -124,6 +126,13 @@ const injectFloatTooltipOverride = () => {
 }
 `;
   document.head.appendChild(style);
+};
+
+const releaseFloatTooltipOverride = () => {
+  if (typeof document === "undefined") return;
+  floatTooltipOverrideUsers = Math.max(0, floatTooltipOverrideUsers - 1);
+  if (floatTooltipOverrideUsers > 0) return;
+  document.getElementById(FLOAT_TOOLTIP_OVERRIDE_ID)?.remove();
 };
 
 export const CoolGlobe = ({
@@ -202,6 +211,7 @@ export const CoolGlobe = ({
 
   useEffect(() => {
     injectFloatTooltipOverride();
+    return () => releaseFloatTooltipOverride();
   }, []);
 
   const countriesMetricValues = useMemo(
