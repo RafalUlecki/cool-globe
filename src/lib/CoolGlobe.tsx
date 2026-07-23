@@ -184,26 +184,65 @@ export const CoolGlobe = ({
   );
 
   useEffect(() => {
+    let cancelled = false;
+
     const loadCountries = async () => {
       let features: Feature[] = [];
+      let lastError: Error | undefined;
+
       try {
         const response = await fetch(GLOBAL_COUNTRIES_GEOJSON_URL);
+        if (!response.ok) {
+          throw new Error(
+            `Failed to load countries GeoJSON (${response.status}): ${GLOBAL_COUNTRIES_GEOJSON_URL}`,
+          );
+        }
         const countriesGeoJson = (await response.json()) as FeatureCollection;
+        if (!Array.isArray(countriesGeoJson.features)) {
+          throw new Error("Countries GeoJSON response missing features array");
+        }
         features = countriesGeoJson.features as Feature[];
-      } catch {
-        // Fallback keeps globe functional even if the GeoJSON source is unavailable.
-        const response = await fetch(WORLD_TOPOJSON_URL);
-        const topologyData = (await response.json()) as TopologyRoot;
-        const countriesObject = topologyData.objects.countries;
-        const converted = feature(
-          topologyData as never,
-          countriesObject as never,
-        ) as Feature | FeatureCollection;
-        features =
-          converted.type === "FeatureCollection"
-            ? converted.features
-            : [converted];
+      } catch (primaryError) {
+        lastError =
+          primaryError instanceof Error
+            ? primaryError
+            : new Error("Failed to load countries GeoJSON");
+        try {
+          const response = await fetch(WORLD_TOPOJSON_URL);
+          if (!response.ok) {
+            throw new Error(
+              `Failed to load world TopoJSON fallback (${response.status}): ${WORLD_TOPOJSON_URL}`,
+            );
+          }
+          const topologyData = (await response.json()) as TopologyRoot;
+          const countriesObject = topologyData.objects.countries;
+          const converted = feature(
+            topologyData as never,
+            countriesObject as never,
+          ) as Feature | FeatureCollection;
+          features =
+            converted.type === "FeatureCollection"
+              ? converted.features
+              : [converted];
+          lastError = undefined;
+        } catch (fallbackError) {
+          lastError =
+            fallbackError instanceof Error
+              ? fallbackError
+              : new Error("Failed to load world TopoJSON fallback");
+          features = [];
+        }
       }
+
+      if (cancelled) return;
+
+      if (lastError) {
+        onError?.(lastError);
+        console.warn("[cool-globe]", lastError.message);
+        setCountryFeatures([]);
+        return;
+      }
+
       const enriched = features.map((countryFeature) => {
         const rawId = String(countryFeature.id ?? "");
         const properties = (countryFeature.properties ??
@@ -238,8 +277,12 @@ export const CoolGlobe = ({
       }) as Feature[];
       setCountryFeatures(enriched);
     };
+
     void loadCountries();
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [onError]);
 
   useEffect(() => {
     if (!containerRef.current) return;
