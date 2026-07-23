@@ -57,6 +57,11 @@ export const extractFeatureCoordinates = (geometry: unknown): number[][] => {
 };
 
 export const getFeatureBounds = (featureItem: Feature): Bounds | undefined => {
+  const properties = (featureItem.properties ?? {}) as PolygonFeatureProperties & {
+    __bounds?: Bounds;
+  };
+  if (properties.__bounds) return properties.__bounds;
+
   const points = extractFeatureCoordinates(featureItem.geometry);
   if (!points.length) return undefined;
   const bounds = points.reduce<Bounds>(
@@ -75,6 +80,11 @@ export const getFeatureBounds = (featureItem: Feature): Bounds | undefined => {
   );
   if (!Number.isFinite(bounds.minLat) || !Number.isFinite(bounds.minLng))
     return undefined;
+
+  featureItem.properties = {
+    ...properties,
+    __bounds: bounds,
+  };
   return bounds;
 };
 
@@ -89,15 +99,24 @@ export const getAltitudeFromBounds = (bounds: Bounds): number => {
 export const getMetricValue = (
   metricRecord: MetricRecord | undefined,
   metricKey: string,
-): number => {
+): number | undefined => {
   const metricValue = metricRecord?.[metricKey];
-  return typeof metricValue === "number" ? metricValue : 0;
+  return typeof metricValue === "number" && Number.isFinite(metricValue)
+    ? metricValue
+    : undefined;
 };
+
+export const NO_DATA_POLYGON_COLOR = "rgba(226,232,240,0.55)";
 
 export const createColorResolver = (values: number[], colorScale: ColorScaleInput) => {
   if (!values.length) return () => colorScale.minColor;
-  const minValue = Math.min(...values);
-  const maxValue = Math.max(...values);
+  let minValue = values[0]!;
+  let maxValue = values[0]!;
+  for (let index = 1; index < values.length; index += 1) {
+    const value = values[index]!;
+    if (value < minValue) minValue = value;
+    if (value > maxValue) maxValue = value;
+  }
   if (minValue === maxValue) return () => colorScale.maxColor;
   const normalizer = scaleLinear().domain([minValue, maxValue]).range([0, 1]);
   const interpolator = interpolateRgb(colorScale.minColor, colorScale.maxColor);
@@ -113,13 +132,7 @@ export const getZoomLevelByAltitude = (altitude: number): GlobeLevel => {
 export const formatMetric = (value: number): string =>
   new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 
-export const escapeHtml = (raw: string): string =>
-  raw
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+export { escapeHtml } from "./escapeHtml.js";
 
 /** Removes trailing ISO-3166-1 alpha-2 codes from labels like "Germany (DE)" or "Bayern — DE". */
 export const stripIsoFromDisplayName = (

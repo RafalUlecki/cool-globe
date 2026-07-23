@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Globe from "react-globe.gl";
+import type { GlobeMethods } from "react-globe.gl";
 import { feature } from "topojson-client";
 import type { Feature, FeatureCollection } from "geojson";
 import { Color } from "three";
@@ -32,6 +33,7 @@ import {
   getZoomLevelByAltitude,
   humanizeMetricKey,
   isHiddenMetricKey,
+  NO_DATA_POLYGON_COLOR,
   normalizeCountryIso,
   stripIsoFromDisplayName,
 } from "./dashboardGlobe.utils";
@@ -42,10 +44,71 @@ type SelectionOptions = {
   notify?: boolean;
 };
 
+/** react-globe.gl omits globeMaterial from GlobeMethods; three-globe exposes it at runtime. */
+type CoolGlobeMethods = GlobeMethods & {
+  globeMaterial: () => MeshPhongMaterial;
+};
+
 const FLOAT_TOOLTIP_OVERRIDE_ID = "cool-globe-float-tooltip-override";
+const REGION_CACHE_LIMIT = 8;
+let floatTooltipOverrideUsers = 0;
+
+const getFeatureHoverKey = (featureItem: Feature | null): string | null => {
+  if (!featureItem) return null;
+  const properties = (featureItem.properties ?? {}) as PolygonFeatureProperties;
+  if (properties.__regionName) {
+    return `region:${properties.__countryCode ?? ""}:${properties.__regionName}`;
+  }
+  return `country:${properties.__isoA2 ?? String(featureItem.id ?? "")}`;
+};
+
+const rememberRegionCache = (
+  cache: Record<string, Feature[]>,
+  order: string[],
+  countryCode: string,
+  features: Feature[],
+) => {
+  cache[countryCode] = features;
+  const existingIndex = order.indexOf(countryCode);
+  if (existingIndex >= 0) order.splice(existingIndex, 1);
+  order.push(countryCode);
+  while (order.length > REGION_CACHE_LIMIT) {
+    const evicted = order.shift();
+    if (evicted) delete cache[evicted];
+  }
+};
+
+/** Shared in-flight Admin-1 loads keyed by URL so rapid country switches do not double-fetch. */
+const admin1FeaturesPromises = new Map<string, Promise<Feature[]>>();
+
+const loadGlobalAdmin1Features = (url: string): Promise<Feature[]> => {
+  const existing = admin1FeaturesPromises.get(url);
+  if (existing) return existing;
+
+  const promise = (async () => {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(
+        `Failed to load Admin-1 GeoJSON (${response.status}): ${url}`,
+      );
+    }
+    const admin1GeoJson = (await response.json()) as FeatureCollection;
+    if (!Array.isArray(admin1GeoJson.features)) {
+      throw new Error("Admin-1 GeoJSON response missing features array");
+    }
+    return admin1GeoJson.features as Feature[];
+  })().catch((error) => {
+    admin1FeaturesPromises.delete(url);
+    throw error;
+  });
+
+  admin1FeaturesPromises.set(url, promise);
+  return promise;
+};
 
 const injectFloatTooltipOverride = () => {
   if (typeof document === "undefined") return;
+  floatTooltipOverrideUsers += 1;
   if (document.getElementById(FLOAT_TOOLTIP_OVERRIDE_ID)) return;
   const style = document.createElement("style");
   style.id = FLOAT_TOOLTIP_OVERRIDE_ID;
@@ -65,6 +128,13 @@ const injectFloatTooltipOverride = () => {
   document.head.appendChild(style);
 };
 
+const releaseFloatTooltipOverride = () => {
+  if (typeof document === "undefined") return;
+  floatTooltipOverrideUsers = Math.max(0, floatTooltipOverrideUsers - 1);
+  if (floatTooltipOverrideUsers > 0) return;
+  document.getElementById(FLOAT_TOOLTIP_OVERRIDE_ID)?.remove();
+};
+
 export const CoolGlobe = ({
   statisticsData,
   resetSignal,
@@ -73,6 +143,10 @@ export const CoolGlobe = ({
   selectedCountry,
   selectedRegion,
   onSelectionChange,
+  onError,
+  fetchRegionsForCountry,
+  admin1GeoJsonUrl = GLOBAL_ADMIN1_GEOJSON_URL,
+  onRegionsLoadingChange,
   countryNumericToIsoMap = {},
   countryNameToIsoMap = {},
   primaryMetric = "visits",
@@ -81,10 +155,11 @@ export const CoolGlobe = ({
   const isCountryControlled = selectedCountry !== undefined;
   const isRegionControlled = selectedRegion !== undefined;
 
-  const globeRef = useRef<any>(null);
+  const globeRef = useRef<CoolGlobeMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const zoomDebounceRef = useRef<number | undefined>(undefined);
   const regionCacheRef = useRef<Record<string, Feature[]>>({});
+  const regionCacheOrderRef = useRef<string[]>([]);
   const globalAdmin1Ref = useRef<Feature[] | null>(null);
   const previousResetSignalRef = useRef<string | number | undefined>(resetSignal);
   const preselectionAppliedKeyRef = useRef<string | undefined>(undefined);
@@ -100,8 +175,11 @@ export const CoolGlobe = ({
   const [internalRegionName, setInternalRegionName] = useState<
     string | undefined
   >();
-  const [hoveredFeature, setHoveredFeature] = useState<Feature | null>(null);
-  const [countryFeatures, setCountryFeatures] = useState<Feature[]>([]);
+  const [hoveredFeatureKey, setHoveredFeatureKey] = useState<string | null>(
+    null,
+  );
+  const hoveredFeatureKeyRef = useRef<string | null>(null);
+  const [rawCountryFeatures, setRawCountryFeatures] = useState<Feature[]>([]);
   const [regionFeatures, setRegionFeatures] = useState<Feature[]>([]);
   const effectiveCountryCode = isCountryControlled
     ? selectedCountry
@@ -133,20 +211,21 @@ export const CoolGlobe = ({
 
   useEffect(() => {
     injectFloatTooltipOverride();
+    return () => releaseFloatTooltipOverride();
   }, []);
 
   const countriesMetricValues = useMemo(
     () =>
-      Object.values(statisticsData.countries).map((metrics) =>
-        getMetricValue(metrics, primaryMetric),
-      ),
+      Object.values(statisticsData.countries)
+        .map((metrics) => getMetricValue(metrics, primaryMetric))
+        .filter((value): value is number => value !== undefined),
     [primaryMetric, statisticsData.countries],
   );
   const regionsMetricValues = useMemo(() => {
     if (!effectiveCountryCode) return [];
-    return Object.values(statisticsData.regions[effectiveCountryCode] ?? {}).map(
-      (metrics) => getMetricValue(metrics, primaryMetric),
-    );
+    return Object.values(statisticsData.regions[effectiveCountryCode] ?? {})
+      .map((metrics) => getMetricValue(metrics, primaryMetric))
+      .filter((value): value is number => value !== undefined);
   }, [effectiveCountryCode, primaryMetric, statisticsData.regions]);
   const countryColorResolver = useMemo(
     () => createColorResolver(countriesMetricValues, colorScale),
@@ -157,28 +236,9 @@ export const CoolGlobe = ({
     [regionsMetricValues, colorScale],
   );
 
-  useEffect(() => {
-    const loadCountries = async () => {
-      let features: Feature[] = [];
-      try {
-        const response = await fetch(GLOBAL_COUNTRIES_GEOJSON_URL);
-        const countriesGeoJson = (await response.json()) as FeatureCollection;
-        features = countriesGeoJson.features as Feature[];
-      } catch {
-        // Fallback keeps globe functional even if the GeoJSON source is unavailable.
-        const response = await fetch(WORLD_TOPOJSON_URL);
-        const topologyData = (await response.json()) as TopologyRoot;
-        const countriesObject = topologyData.objects.countries;
-        const converted = feature(
-          topologyData as never,
-          countriesObject as never,
-        ) as Feature | FeatureCollection;
-        features =
-          converted.type === "FeatureCollection"
-            ? converted.features
-            : [converted];
-      }
-      const enriched = features.map((countryFeature) => {
+  const countryFeatures = useMemo(
+    () =>
+      rawCountryFeatures.map((countryFeature) => {
         const rawId = String(countryFeature.id ?? "");
         const properties = (countryFeature.properties ??
           {}) as CountryFeatureProperties;
@@ -199,7 +259,9 @@ export const CoolGlobe = ({
         const isoA2 =
           countryNumericToIsoMap[rawId] ??
           countryNameToIsoMap[normalizedName] ??
-          (candidateIsoA2 && candidateIsoA2 !== "-99" ? candidateIsoA2 : undefined) ??
+          (candidateIsoA2 && candidateIsoA2 !== "-99"
+            ? candidateIsoA2
+            : undefined) ??
           (rawId.length === 2 ? rawId.toUpperCase() : rawId);
         return {
           ...countryFeature,
@@ -209,11 +271,78 @@ export const CoolGlobe = ({
             name: displayName || isoA2 || `Country ${rawId}`,
           },
         };
-      }) as Feature[];
-      setCountryFeatures(enriched);
+      }) as Feature[],
+    [countryNameToIsoMap, countryNumericToIsoMap, rawCountryFeatures],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadCountries = async () => {
+      let features: Feature[] = [];
+      let lastError: Error | undefined;
+
+      try {
+        const response = await fetch(GLOBAL_COUNTRIES_GEOJSON_URL);
+        if (!response.ok) {
+          throw new Error(
+            `Failed to load countries GeoJSON (${response.status}): ${GLOBAL_COUNTRIES_GEOJSON_URL}`,
+          );
+        }
+        const countriesGeoJson = (await response.json()) as FeatureCollection;
+        if (!Array.isArray(countriesGeoJson.features)) {
+          throw new Error("Countries GeoJSON response missing features array");
+        }
+        features = countriesGeoJson.features as Feature[];
+      } catch (primaryError) {
+        lastError =
+          primaryError instanceof Error
+            ? primaryError
+            : new Error("Failed to load countries GeoJSON");
+        try {
+          const response = await fetch(WORLD_TOPOJSON_URL);
+          if (!response.ok) {
+            throw new Error(
+              `Failed to load world TopoJSON fallback (${response.status}): ${WORLD_TOPOJSON_URL}`,
+            );
+          }
+          const topologyData = (await response.json()) as TopologyRoot;
+          const countriesObject = topologyData.objects.countries;
+          const converted = feature(
+            topologyData as never,
+            countriesObject as never,
+          ) as Feature | FeatureCollection;
+          features =
+            converted.type === "FeatureCollection"
+              ? converted.features
+              : [converted];
+          lastError = undefined;
+        } catch (fallbackError) {
+          lastError =
+            fallbackError instanceof Error
+              ? fallbackError
+              : new Error("Failed to load world TopoJSON fallback");
+          features = [];
+        }
+      }
+
+      if (cancelled) return;
+
+      if (lastError) {
+        onError?.(lastError);
+        console.warn("[cool-globe]", lastError.message);
+        setRawCountryFeatures([]);
+        return;
+      }
+
+      setRawCountryFeatures(features);
     };
+
     void loadCountries();
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [onError]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -229,32 +358,36 @@ export const CoolGlobe = ({
     return () => observer.disconnect();
   }, []);
 
+  useEffect(
+    () => () => {
+      if (zoomDebounceRef.current)
+        window.clearTimeout(zoomDebounceRef.current);
+      regionCacheRef.current = {};
+      regionCacheOrderRef.current = [];
+      globalAdmin1Ref.current = null;
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!effectiveCountryCode) {
       setRegionFeatures([]);
+      onRegionsLoadingChange?.(false);
       return;
     }
-    const cachedFeatures = regionCacheRef.current[effectiveCountryCode];
+    const countryCode = effectiveCountryCode;
+    const cachedFeatures = regionCacheRef.current[countryCode];
     if (cachedFeatures) {
       setRegionFeatures(cachedFeatures);
+      onRegionsLoadingChange?.(false);
       return;
     }
-    const loadRegions = async () => {
-      if (!globalAdmin1Ref.current) {
-        const response = await fetch(GLOBAL_ADMIN1_GEOJSON_URL);
-        const admin1GeoJson = (await response.json()) as FeatureCollection;
-        globalAdmin1Ref.current = admin1GeoJson.features as Feature[];
-      }
-      const filtered = (globalAdmin1Ref.current ?? []).filter(
-        (regionFeature) => {
-          const props = (regionFeature.properties ?? {}) as Record<
-            string,
-            unknown
-          >;
-          return props.iso_a2 === effectiveCountryCode;
-        },
-      ) as Feature[];
-      const mapped = filtered.map((regionFeature) => {
+
+    let cancelled = false;
+    onRegionsLoadingChange?.(true);
+
+    const mapRegionFeatures = (features: Feature[]): Feature[] =>
+      features.map((regionFeature) => {
         const sourceProperties = (regionFeature.properties ?? {}) as Record<
           string,
           unknown
@@ -264,17 +397,72 @@ export const CoolGlobe = ({
           ...regionFeature,
           properties: {
             ...sourceProperties,
-            __countryCode: effectiveCountryCode,
+            __countryCode: countryCode,
             __regionName: rawName,
             name: rawName,
           },
         };
       }) as Feature[];
-      regionCacheRef.current[effectiveCountryCode] = mapped;
-      setRegionFeatures(mapped);
+
+    const loadRegions = async () => {
+      try {
+        let mapped: Feature[];
+
+        if (fetchRegionsForCountry) {
+          const loaded = await fetchRegionsForCountry(countryCode);
+          if (cancelled) return;
+          mapped = mapRegionFeatures(loaded);
+        } else {
+          if (!globalAdmin1Ref.current) {
+            globalAdmin1Ref.current =
+              await loadGlobalAdmin1Features(admin1GeoJsonUrl);
+          }
+          if (cancelled) return;
+
+          const filtered = (globalAdmin1Ref.current ?? []).filter(
+            (regionFeature) => {
+              const props = (regionFeature.properties ?? {}) as Record<
+                string,
+                unknown
+              >;
+              return props.iso_a2 === countryCode;
+            },
+          ) as Feature[];
+          mapped = mapRegionFeatures(filtered);
+        }
+
+        rememberRegionCache(
+          regionCacheRef.current,
+          regionCacheOrderRef.current,
+          countryCode,
+          mapped,
+        );
+        if (!cancelled) setRegionFeatures(mapped);
+      } catch (error) {
+        if (cancelled) return;
+        setRegionFeatures([]);
+        const normalized =
+          error instanceof Error
+            ? error
+            : new Error("Failed to load Admin-1 regions");
+        onError?.(normalized);
+        console.warn("[cool-globe]", normalized.message);
+      } finally {
+        if (!cancelled) onRegionsLoadingChange?.(false);
+      }
     };
+
     void loadRegions();
-  }, [effectiveCountryCode]);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    admin1GeoJsonUrl,
+    effectiveCountryCode,
+    fetchRegionsForCountry,
+    onError,
+    onRegionsLoadingChange,
+  ]);
 
   useEffect(() => {
     if (effectiveRegionName && zoomLevel < 2) return void setZoomLevel(2);
@@ -434,7 +622,8 @@ export const CoolGlobe = ({
   useEffect(() => {
     if (resetSignal === previousResetSignalRef.current) return;
     previousResetSignalRef.current = resetSignal;
-    setHoveredFeature(null);
+    setHoveredFeatureKey(null);
+    hoveredFeatureKeyRef.current = null;
     preselectionAppliedKeyRef.current = undefined;
 
     if (isCountryControlled) {
@@ -648,12 +837,19 @@ export const CoolGlobe = ({
     }
   };
 
-  const selectedPolygonData =
-    zoomLevel === 0
-      ? countryFeatures
-      : regionFeatures.length
-        ? [...countryFeatures, ...regionFeatures]
-        : countryFeatures;
+  const selectedPolygonData = useMemo(() => {
+    if (zoomLevel === 0) return countryFeatures;
+    if (regionFeatures.length) return regionFeatures;
+    // Regions still loading: render only the selected country outline, not the full world.
+    if (effectiveCountryCode) {
+      return countryFeatures.filter((featureItem) => {
+        const properties = (featureItem.properties ??
+          {}) as PolygonFeatureProperties;
+        return properties.__isoA2 === effectiveCountryCode;
+      });
+    }
+    return countryFeatures;
+  }, [countryFeatures, effectiveCountryCode, regionFeatures, zoomLevel]);
 
   const resolveMetric = (
     countryCode?: string,
@@ -726,11 +922,14 @@ export const CoolGlobe = ({
           const regionName = properties.__regionName;
           const metricRecord = resolveMetric(countryCode, regionName);
           const metric = getMetricValue(metricRecord, primaryMetric);
+          if (metric === undefined) return NO_DATA_POLYGON_COLOR;
           const baseColor =
             zoomLevel === 0
               ? countryColorResolver(metric)
               : regionColorResolver(metric);
-          const isHovered = hoveredFeature === (featureItem as Feature);
+          const isHovered =
+            hoveredFeatureKey !== null &&
+            getFeatureHoverKey(featureItem as Feature) === hoveredFeatureKey;
           return isHovered ? "#60a5fa" : baseColor;
         }}
         polygonSideColor={(featureItem: object) => {
@@ -751,6 +950,7 @@ export const CoolGlobe = ({
             ? "rgba(51,65,85,0.98)"
             : "rgba(156,163,175,0.95)";
         }}
+        // SECURITY: polygonLabel returns HTML. Every dynamic string must go through escapeHtml.
         polygonLabel={(featureItem: object) => {
           const properties = ((featureItem as Feature).properties ??
             {}) as PolygonFeatureProperties;
@@ -778,7 +978,12 @@ export const CoolGlobe = ({
           </div>`;
         }}
         onPolygonHover={(featureItem: object | null) => {
-          setHoveredFeature((featureItem as Feature | null) ?? null);
+          const nextKey = getFeatureHoverKey(
+            (featureItem as Feature | null) ?? null,
+          );
+          if (hoveredFeatureKeyRef.current === nextKey) return;
+          hoveredFeatureKeyRef.current = nextKey;
+          setHoveredFeatureKey(nextKey);
         }}
         onPolygonClick={(polygon) => handlePolygonClick(polygon as Feature)}
         onZoom={handleZoomEvent}
