@@ -42,7 +42,17 @@ type SelectionOptions = {
   notify?: boolean;
 };
 
+const FLOAT_TOOLTIP_OVERRIDE_ID = "cool-globe-float-tooltip-override";
 const REGION_CACHE_LIMIT = 8;
+
+const getFeatureHoverKey = (featureItem: Feature | null): string | null => {
+  if (!featureItem) return null;
+  const properties = (featureItem.properties ?? {}) as PolygonFeatureProperties;
+  if (properties.__regionName) {
+    return `region:${properties.__countryCode ?? ""}:${properties.__regionName}`;
+  }
+  return `country:${properties.__isoA2 ?? String(featureItem.id ?? "")}`;
+};
 
 const rememberRegionCache = (
   cache: Record<string, Feature[]>,
@@ -149,7 +159,10 @@ export const CoolGlobe = ({
   const [internalRegionName, setInternalRegionName] = useState<
     string | undefined
   >();
-  const [hoveredFeature, setHoveredFeature] = useState<Feature | null>(null);
+  const [hoveredFeatureKey, setHoveredFeatureKey] = useState<string | null>(
+    null,
+  );
+  const hoveredFeatureKeyRef = useRef<string | null>(null);
   const [rawCountryFeatures, setRawCountryFeatures] = useState<Feature[]>([]);
   const [regionFeatures, setRegionFeatures] = useState<Feature[]>([]);
   const effectiveCountryCode = isCountryControlled
@@ -592,7 +605,8 @@ export const CoolGlobe = ({
   useEffect(() => {
     if (resetSignal === previousResetSignalRef.current) return;
     previousResetSignalRef.current = resetSignal;
-    setHoveredFeature(null);
+    setHoveredFeatureKey(null);
+    hoveredFeatureKeyRef.current = null;
     preselectionAppliedKeyRef.current = undefined;
 
     if (isCountryControlled) {
@@ -895,7 +909,9 @@ export const CoolGlobe = ({
             zoomLevel === 0
               ? countryColorResolver(metric)
               : regionColorResolver(metric);
-          const isHovered = hoveredFeature === (featureItem as Feature);
+          const isHovered =
+            hoveredFeatureKey !== null &&
+            getFeatureHoverKey(featureItem as Feature) === hoveredFeatureKey;
           return isHovered ? "#60a5fa" : baseColor;
         }}
         polygonSideColor={(featureItem: object) => {
@@ -943,7 +959,12 @@ export const CoolGlobe = ({
           </div>`;
         }}
         onPolygonHover={(featureItem: object | null) => {
-          setHoveredFeature((featureItem as Feature | null) ?? null);
+          const nextKey = getFeatureHoverKey(
+            (featureItem as Feature | null) ?? null,
+          );
+          if (hoveredFeatureKeyRef.current === nextKey) return;
+          hoveredFeatureKeyRef.current = nextKey;
+          setHoveredFeatureKey(nextKey);
         }}
         onPolygonClick={(polygon) => handlePolygonClick(polygon as Feature)}
         onZoom={handleZoomEvent}
