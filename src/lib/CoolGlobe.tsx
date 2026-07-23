@@ -42,7 +42,23 @@ type SelectionOptions = {
   notify?: boolean;
 };
 
-const FLOAT_TOOLTIP_OVERRIDE_ID = "cool-globe-float-tooltip-override";
+const REGION_CACHE_LIMIT = 8;
+
+const rememberRegionCache = (
+  cache: Record<string, Feature[]>,
+  order: string[],
+  countryCode: string,
+  features: Feature[],
+) => {
+  cache[countryCode] = features;
+  const existingIndex = order.indexOf(countryCode);
+  if (existingIndex >= 0) order.splice(existingIndex, 1);
+  order.push(countryCode);
+  while (order.length > REGION_CACHE_LIMIT) {
+    const evicted = order.shift();
+    if (evicted) delete cache[evicted];
+  }
+};
 
 /** Shared in-flight Admin-1 loads keyed by URL so rapid country switches do not double-fetch. */
 const admin1FeaturesPromises = new Map<string, Promise<Feature[]>>();
@@ -117,6 +133,7 @@ export const CoolGlobe = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const zoomDebounceRef = useRef<number | undefined>(undefined);
   const regionCacheRef = useRef<Record<string, Feature[]>>({});
+  const regionCacheOrderRef = useRef<string[]>([]);
   const globalAdmin1Ref = useRef<Feature[] | null>(null);
   const previousResetSignalRef = useRef<string | number | undefined>(resetSignal);
   const preselectionAppliedKeyRef = useRef<string | undefined>(undefined);
@@ -315,6 +332,9 @@ export const CoolGlobe = ({
     () => () => {
       if (zoomDebounceRef.current)
         window.clearTimeout(zoomDebounceRef.current);
+      regionCacheRef.current = {};
+      regionCacheOrderRef.current = [];
+      globalAdmin1Ref.current = null;
     },
     [],
   );
@@ -381,7 +401,12 @@ export const CoolGlobe = ({
           mapped = mapRegionFeatures(filtered);
         }
 
-        regionCacheRef.current[countryCode] = mapped;
+        rememberRegionCache(
+          regionCacheRef.current,
+          regionCacheOrderRef.current,
+          countryCode,
+          mapped,
+        );
         if (!cancelled) setRegionFeatures(mapped);
       } catch (error) {
         if (cancelled) return;
