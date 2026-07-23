@@ -311,6 +311,14 @@ export const CoolGlobe = ({
     return () => observer.disconnect();
   }, []);
 
+  useEffect(
+    () => () => {
+      if (zoomDebounceRef.current)
+        window.clearTimeout(zoomDebounceRef.current);
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!effectiveCountryCode) {
       setRegionFeatures([]);
