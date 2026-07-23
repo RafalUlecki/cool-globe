@@ -57,6 +57,11 @@ export const extractFeatureCoordinates = (geometry: unknown): number[][] => {
 };
 
 export const getFeatureBounds = (featureItem: Feature): Bounds | undefined => {
+  const properties = (featureItem.properties ?? {}) as PolygonFeatureProperties & {
+    __bounds?: Bounds;
+  };
+  if (properties.__bounds) return properties.__bounds;
+
   const points = extractFeatureCoordinates(featureItem.geometry);
   if (!points.length) return undefined;
   const bounds = points.reduce<Bounds>(
@@ -75,6 +80,11 @@ export const getFeatureBounds = (featureItem: Feature): Bounds | undefined => {
   );
   if (!Number.isFinite(bounds.minLat) || !Number.isFinite(bounds.minLng))
     return undefined;
+
+  featureItem.properties = {
+    ...properties,
+    __bounds: bounds,
+  };
   return bounds;
 };
 
