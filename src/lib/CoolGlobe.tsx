@@ -32,6 +32,7 @@ import {
   getZoomLevelByAltitude,
   humanizeMetricKey,
   isHiddenMetricKey,
+  NO_DATA_POLYGON_COLOR,
   normalizeCountryIso,
   stripIsoFromDisplayName,
 } from "./dashboardGlobe.utils";
@@ -199,16 +200,16 @@ export const CoolGlobe = ({
 
   const countriesMetricValues = useMemo(
     () =>
-      Object.values(statisticsData.countries).map((metrics) =>
-        getMetricValue(metrics, primaryMetric),
-      ),
+      Object.values(statisticsData.countries)
+        .map((metrics) => getMetricValue(metrics, primaryMetric))
+        .filter((value): value is number => value !== undefined),
     [primaryMetric, statisticsData.countries],
   );
   const regionsMetricValues = useMemo(() => {
     if (!effectiveCountryCode) return [];
-    return Object.values(statisticsData.regions[effectiveCountryCode] ?? {}).map(
-      (metrics) => getMetricValue(metrics, primaryMetric),
-    );
+    return Object.values(statisticsData.regions[effectiveCountryCode] ?? {})
+      .map((metrics) => getMetricValue(metrics, primaryMetric))
+      .filter((value): value is number => value !== undefined);
   }, [effectiveCountryCode, primaryMetric, statisticsData.regions]);
   const countryColorResolver = useMemo(
     () => createColorResolver(countriesMetricValues, colorScale),
@@ -905,6 +906,7 @@ export const CoolGlobe = ({
           const regionName = properties.__regionName;
           const metricRecord = resolveMetric(countryCode, regionName);
           const metric = getMetricValue(metricRecord, primaryMetric);
+          if (metric === undefined) return NO_DATA_POLYGON_COLOR;
           const baseColor =
             zoomLevel === 0
               ? countryColorResolver(metric)

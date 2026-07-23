@@ -99,10 +99,14 @@ export const getAltitudeFromBounds = (bounds: Bounds): number => {
 export const getMetricValue = (
   metricRecord: MetricRecord | undefined,
   metricKey: string,
-): number => {
+): number | undefined => {
   const metricValue = metricRecord?.[metricKey];
-  return typeof metricValue === "number" ? metricValue : 0;
+  return typeof metricValue === "number" && Number.isFinite(metricValue)
+    ? metricValue
+    : undefined;
 };
+
+export const NO_DATA_POLYGON_COLOR = "rgba(226,232,240,0.55)";
 
 export const createColorResolver = (values: number[], colorScale: ColorScaleInput) => {
   if (!values.length) return () => colorScale.minColor;
