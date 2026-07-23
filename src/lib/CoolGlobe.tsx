@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Globe from "react-globe.gl";
+import type { GlobeMethods } from "react-globe.gl";
 import { feature } from "topojson-client";
 import type { Feature, FeatureCollection } from "geojson";
 import { Color } from "three";
@@ -41,6 +42,11 @@ import type { CoolGlobeProps, GlobeSelection } from "./types";
 type SelectionOptions = {
   focusCamera?: boolean;
   notify?: boolean;
+};
+
+/** react-globe.gl omits globeMaterial from GlobeMethods; three-globe exposes it at runtime. */
+type CoolGlobeMethods = GlobeMethods & {
+  globeMaterial: () => MeshPhongMaterial;
 };
 
 const FLOAT_TOOLTIP_OVERRIDE_ID = "cool-globe-float-tooltip-override";
@@ -140,7 +146,7 @@ export const CoolGlobe = ({
   const isCountryControlled = selectedCountry !== undefined;
   const isRegionControlled = selectedRegion !== undefined;
 
-  const globeRef = useRef<any>(null);
+  const globeRef = useRef<CoolGlobeMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const zoomDebounceRef = useRef<number | undefined>(undefined);
   const regionCacheRef = useRef<Record<string, Feature[]>>({});
